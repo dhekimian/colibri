@@ -58,6 +58,9 @@ jobs:
           docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
             --security-opt seccomp=unconfined -v "$PWD:/src" -w /src "$IMAGE" bash -uo pipefail -c '
               export DEBIAN_FRONTEND=noninteractive
+              # A trapped kernel (make hip-test traps on purpose) would pipe a GPU core dump to the
+              # host core_pattern handler, which the container does not have ("execvp failed").
+              export HSA_DISABLE_COREDUMP_ON_EXCEPTION=1
               apt-get update -qq && apt-get install -y -qq build-essential git python3 \
                 rocwmma-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null
               rocminfo > /tmp/rocminfo.txt 2>&1 || true
@@ -70,6 +73,23 @@ jobs:
               cd c
               if bash tests/vulkan_engines.sh shader; then result vulkan-shader pass; else result vulkan-shader fail; fi
               if bash tests/vulkan_engines.sh staged; then result vulkan-staged pass; else result vulkan-staged fail; fi
+              # Diagnostics, not gated: which harness case fails, and on which path.
+              {
+                ls /usr/share/vulkan/icd.d
+                echo "== mesa-vulkan-drivers $(dpkg-query -W -f="\${Version}" mesa-vulkan-drivers)"
+                for icd in radeon lvp; do
+                  for coop in 1 0; do
+                    echo "== vk_test on $icd, COLI_VK_COOP=$coop"
+                    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/${icd}_icd.json COLI_VK_COOP=$coop COLI_VK_TEST_MATMUL_ONLY=1 \
+                      ./vk_test shaders/qmatmul.spv > diag.log 2> diag.err; echo "exit $?"
+                    grep -aE "^\[VK\] ready|^import |digest|  \^|^(PASS|FAIL)$" diag.err diag.log || true
+                  done
+                done
+                echo "== staged harness, mapped run (as vulkan_engines.sh staged runs it)"
+                COLI_VK_STAGED=0 COLI_VK_TEST_MATMUL_ONLY=1 ./vk_test shaders/qmatmul.spv > diag.log 2> diag.err; echo "exit $?"
+                grep -aE "^import |^(PASS|FAIL)$" diag.log || true
+              } 2>&1 | tee /src/vk-diag.txt
+              rm -f diag.log diag.err
               chown -R "$(stat -c %u:%g /src)" /src
             '
           cat results.txt
