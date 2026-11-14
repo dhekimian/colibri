@@ -1,0 +1,111 @@
+# Run colibri's HIP and Vulkan backends on consumer AMD GPUs.
+#
+# CI builds the HIP backend but never runs it, and the Vulkan suites run on
+# Lavapipe (CPU). This runs both on a Radeon 8060S (Strix Halo, gfx1151) and a
+# Radeon AI PRO R9700 (gfx1201): `make hip-test` built for the job's GPU, then
+# the shader and staged Vulkan checks on RADV, in the stock ROCm container.
+#
+# Every run uploads summary-*.json (which checks passed) so results compare
+# across ROCm versions; other workflows call this one for a version matrix.
+#
+# Runners: AMD DevLab, a donated pool of ephemeral, single-use machines. One
+# job per machine; nothing persists between jobs.
+name: ROCm test (gfx1151, gfx1201)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image:
+        description: ROCm container to build and test in
+        default: rocm/dev-ubuntu-24.04:7.2.4-complete
+  workflow_call:
+    inputs:
+      image: {type: string, default: rocm/dev-ubuntu-24.04:7.2.4-complete}
+      label: {type: string, default: release}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-test-${{ github.ref }}-${{ inputs.label || 'release' }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.gpu }} (${{ matrix.gfx }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gpu: strix-halo
+            gfx: gfx1151
+          - gpu: radeon-r9700
+            gfx: gfx1201
+    runs-on: [self-hosted, Linux, devlab-dispatch, "${{ matrix.gpu }}"]
+    timeout-minutes: 90
+    env:
+      IMAGE: ${{ inputs.image || 'rocm/dev-ubuntu-24.04:7.2.4-complete' }}
+      LABEL: ${{ inputs.label || 'release' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test in ${{ env.IMAGE }}
+        run: |
+          set -euo pipefail
+          docker pull -q "$IMAGE"
+          docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            --security-opt seccomp=unconfined -v "$PWD:/src" -w /src "$IMAGE" bash -uo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq && apt-get install -y -qq build-essential git python3 \
+                rocwmma-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null
+              rocminfo | grep -m1 -o "gfx[0-9a-f]*" > /src/arch.txt
+              /opt/rocm/bin/hipconfig --version > /src/hip.txt 2>/dev/null || true
+              result() { echo "$1=$2" >> /src/results.txt; }
+              if make -C c hip-test HIP=1 HIP_ARCH=${{ matrix.gfx }}; then result hip-test pass; else result hip-test fail; fi
+              # The real GPU through RADV, not Lavapipe (the suites default to the CPU device).
+              export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
+              cd c
+              if bash tests/vulkan_engines.sh shader; then result vulkan-shader pass; else result vulkan-shader fail; fi
+              if bash tests/vulkan_engines.sh staged; then result vulkan-staged pass; else result vulkan-staged fail; fi
+              chown -R "$(stat -c %u:%g /src)" /src
+            '
+          cat results.txt
+          ! grep -q '=fail' results.txt
+
+      - name: Write the run summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, datetime
+          def read(p):
+              try:
+                  return open(p).read().strip()
+              except Exception:
+                  return None
+          checks = dict(l.split("=", 1) for l in (read("results.txt") or "").splitlines() if "=" in l)
+          passed = sum(v == "pass" for v in checks.values())
+          summary = {
+              "schema": 1, "project": "colibri", "label": os.environ["LABEL"],
+              "release": "${{ github.sha }}"[:12], "combo": os.environ["IMAGE"],
+              "gpu": "${{ matrix.gpu }}", "gfx": "${{ matrix.gfx }}",
+              "env": {"arch": read("arch.txt"), "hip": read("hip.txt"), "image": os.environ["IMAGE"]},
+              "smoke": None, "checks": checks,
+              "tests": {"ran": len(checks), "passed": passed, "failed": len(checks) - passed,
+                        "errors": 0, "skipped": 0} if checks else None,
+              "job_status": "${{ job.status }}",
+              "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "finished": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+          }
+          json.dump(summary, open("summary.json", "w"), indent=1)
+          print(json.dumps(summary, indent=1))
+          PY
+
+      - name: Upload the run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devlab-summary-${{ inputs.label || 'release' }}-${{ matrix.gpu }}-${{ github.run_attempt }}
+          path: summary.json
+          retention-days: 90
