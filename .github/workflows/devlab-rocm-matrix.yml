@@ -1,4 +1,4 @@
-# DevLab support matrix for colibri: each ROCm line its docs test against,
+# DevLab support matrix for colibri: ROCm 7.2, 7.14, 10.0, 10.1 (images) and the 10.2 rc (pip SDK),
 # on Strix Halo and the R9700. Weekly, in the DevLab fork only.
 name: DevLab support matrix
 
@@ -17,9 +17,14 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - {name: rocm10.0, image: "rocm/dev-ubuntu-24.04:10.0.0-full"}
           - {name: rocm7.2, image: "rocm/dev-ubuntu-24.04:7.2.4-complete"}
+          - {name: rocm7.14, image: "rocm/dev-ubuntu-24.04:7.14.1-full"}
+          - {name: rocm10.0, image: "rocm/dev-ubuntu-24.04:10.0.0-full"}
+          - {name: rocm10.1, image: "rocm/dev-ubuntu-24.04:10.1.0-full"}
+          # ROCm 10.2 rc: no image or apt repository, AMD's pip SDK in a plain Ubuntu
+          - {name: rocm-next, image: "ubuntu:24.04", rocm_sdk: "==10.2.*"}
     uses: ./.github/workflows/devlab-rocm-test.yml
     with:
       image: ${{ matrix.image }}
       label: ${{ matrix.name }}
+      rocm_sdk: ${{ matrix.rocm_sdk || '' }}

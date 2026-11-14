@@ -21,10 +21,14 @@ on:
       image:
         description: ROCm container to build and test in
         default: rocm/dev-ubuntu-24.04:7.2.4-complete
+      rocm_sdk:
+        description: 'Empty: the image''s ROCm. Else AMD''s pip ROCm SDK of this version spec (e.g. ==10.2.*) from the rc index'
+        default: ''
   workflow_call:
     inputs:
       image: {type: string, default: rocm/dev-ubuntu-24.04:7.2.4-complete}
       label: {type: string, default: release}
+      rocm_sdk: {type: string, default: ''}
 
 permissions:
   contents: read
@@ -53,29 +57,26 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build and test in ${{ env.IMAGE }}
+        env:
+          GFX: ${{ matrix.gfx }}
+          ROCM_SDK: ${{ inputs.rocm_sdk || '' }}
+          TORCH_INDEX_MAP: ${{ vars.TORCH_INDEX_MAP }}
         run: |
           set -euo pipefail
+          # AMD's rc index for the pip ROCm SDK, through the mirror when TORCH_INDEX_MAP (repository
+          # variable, JSON: index URL -> mirror URL or [index, extra index, ...]) maps it.
+          SDK_INDEX=https://rc.repo.amd.com/rocm/whl-next/ SDK_EXTRA=
+          if [ -n "$ROCM_SDK" ] && [ -n "${TORCH_INDEX_MAP:-}" ]; then
+            mapfile -t idx < <(python3 -c 'import json,sys; m=json.loads(sys.argv[1]); v=m.get(sys.argv[2], sys.argv[2]); print("\n".join([v] if isinstance(v, str) else v))' "$TORCH_INDEX_MAP" "$SDK_INDEX")
+            # the SDK is in the mirror's core repository, the last of the list
+            SDK_INDEX=${idx[-1]}; SDK_EXTRA="${idx[*]:0:${#idx[@]}-1}"
+            echo "ROCm SDK index: $SDK_INDEX (extra: $SDK_EXTRA)"
+          fi
           docker pull -q "$IMAGE"
-          docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
-            --security-opt seccomp=unconfined -v "$PWD:/src" -w /src "$IMAGE" bash -uo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              # A trapped kernel (make hip-test traps on purpose) would pipe a GPU core dump to the
-              # host core_pattern handler, which the container does not have ("execvp failed").
-              export HSA_DISABLE_COREDUMP_ON_EXCEPTION=1
-              apt-get update -qq && apt-get install -y -qq build-essential git python3 \
-                rocwmma-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null
-              rocminfo > /tmp/rocminfo.txt 2>&1 || true
-              grep -m1 -o "gfx[0-9a-f]*" /tmp/rocminfo.txt > /src/arch.txt || true
-              /opt/rocm/bin/hipconfig --version > /src/hip.txt 2>/dev/null || true
-              result() { echo "$1=$2" >> /src/results.txt; }
-              if make -C c hip-test HIP=1 HIP_ARCH=${{ matrix.gfx }}; then result hip-test pass; else result hip-test fail; fi
-              # The real GPU through RADV, not Lavapipe (the suites default to the CPU device).
-              export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
-              echo "mesa-vulkan-drivers $(dpkg-query -W -f="\${Version}" mesa-vulkan-drivers)"
-              # tests/vulkan_engines.sh shader and staged, one check per piece (see the script).
-              RESULTS=/src/results.txt LOGS=/src/vk-logs bash .github/devlab-vk-checks.sh
-              chown -R "$(stat -c %u:%g /src)" /src
-            '
+          docker run --rm --network host --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+            --security-opt seccomp=unconfined -v "$PWD:/src" -w /src \
+            -e GFX -e ROCM_SDK -e SDK_INDEX="$SDK_INDEX" -e SDK_EXTRA="$SDK_EXTRA" \
+            "$IMAGE" bash /src/.github/devlab-container.sh
           cat results.txt
 
       - name: Judge results
@@ -93,7 +94,7 @@ jobs:
               checks = dict(l.strip().split("=", 1) for l in open("results.txt") if "=" in l)
           except FileNotFoundError:
               checks = {}
-          expected = ["hip-test", "vk-build", "vk-harness", "vk-harness-nocoop", "vk-tier", "vk-tier-host-pairs",
+          expected = ["setup", "hip-test", "vk-build", "vk-harness", "vk-harness-nocoop", "vk-tier", "vk-tier-host-pairs",
                       "glm53-f32", "glm53-f32-gemm-min-s0", "staged-tier", "staged-tier-noimport", "staged-chain"] + \
                      ["staged-harness-" + m for m in ("mapped", "staged", "staged-again", "staged-noimport", "window")]
           missing = [c for c in expected if c not in checks]
@@ -143,7 +144,8 @@ jobs:
               "schema": 1, "project": "colibri", "label": os.environ["LABEL"],
               "release": "${{ github.sha }}"[:12], "combo": os.environ["IMAGE"],
               "gpu": "${{ matrix.gpu }}", "gfx": "${{ matrix.gfx }}",
-              "env": {"arch": read("arch.txt"), "hip": read("hip.txt"), "image": os.environ["IMAGE"]},
+              "env": {"arch": read("arch.txt"), "hip": read("hip.txt"), "image": os.environ["IMAGE"],
+                      "rocm_sdk": read("rocm-sdk.txt")},
               "smoke": None, "checks": checks,
               "tests": {"ran": len(checks), "passed": passed, "failed": len(checks) - passed,
                         "errors": 0, "skipped": 0} if checks else None,
