@@ -6,3 +6,4 @@ vk-tier:window | test_vk_tier window_case expects the COLI_VK_WINDOW_PROBE_MB/AS
 staged-tier:window | the same window_case, in the staged run of test_vk_tier | not filed
 staged-tier-noimport:window | the same window_case, staged with every copy through the staging buffer | not filed
 *chain:dsv4-compress-ratio-4-overlap-1-ape-1 | chain_dsv4.comp mode 2 (compress) reads ring rows other invocations wrote, but its ring buffer R7 is not declared coherent; wrong output on RADV (rel err 0.598, gfx1151 and gfx1201), passes with R7 coherent | not filed
+*chain:kda-rows-* | test_kda_rows wants chain_kda_rows.spv (-DROWS) bit for bit equal to chain_kda.spv one row a call; on RADV 1-4 ulp differ (max |dy| 5.7e-7 at |y| ~1.8, same on gfx1151 and gfx1201, mapped and staged); two separately compiled shaders without `precise` may contract or order float ops differently | not filed

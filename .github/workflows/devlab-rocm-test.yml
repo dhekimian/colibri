@@ -73,7 +73,8 @@ jobs:
             echo "ROCm SDK index: $SDK_INDEX (extra: $SDK_EXTRA)"
           fi
           docker pull -q "$IMAGE"
-          docker run --rm --network host --device=/dev/kfd --device=/dev/dri --group-add video --group-add render \
+          # the host's GIDs: newer images (7.14, 10.x, plain Ubuntu) have no "render" group by name
+          docker run --rm --network host --device=/dev/kfd --device=/dev/dri --group-add "$(getent group video | cut -d: -f3)" --group-add "$(getent group render | cut -d: -f3)" \
             --security-opt seccomp=unconfined -v "$PWD:/src" -w /src \
             -e GFX -e ROCM_SDK -e SDK_INDEX="$SDK_INDEX" -e SDK_EXTRA="$SDK_EXTRA" \
             "$IMAGE" bash /src/.github/devlab-container.sh
