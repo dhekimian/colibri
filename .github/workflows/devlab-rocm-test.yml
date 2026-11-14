@@ -60,7 +60,8 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq && apt-get install -y -qq build-essential git python3 \
                 rocwmma-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null
-              rocminfo | grep -m1 -o "gfx[0-9a-f]*" > /src/arch.txt
+              rocminfo > /tmp/rocminfo.txt 2>&1 || true
+              grep -m1 -o "gfx[0-9a-f]*" /tmp/rocminfo.txt > /src/arch.txt || true
               /opt/rocm/bin/hipconfig --version > /src/hip.txt 2>/dev/null || true
               result() { echo "$1=$2" >> /src/results.txt; }
               if make -C c hip-test HIP=1 HIP_ARCH=${{ matrix.gfx }}; then result hip-test pass; else result hip-test fail; fi
