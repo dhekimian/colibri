@@ -11,11 +11,11 @@ export DEBIAN_FRONTEND=noninteractive
 # make hip-test traps kernels on purpose; ROCr would pipe a GPU core dump to the host's
 # core_pattern handler, which the container does not have ("GPU coredump: execvp failed").
 export HSA_DISABLE_COREDUMP_ON_EXCEPTION=1
-git config --global --add safe.directory '*'
 result() { echo "$1=$2" >> /src/results.txt; }
 
 apt-get update -qq && apt-get install -y -qq build-essential git python3 python3-venv \
   libvulkan-dev glslc mesa-vulkan-drivers > /dev/null || { result setup fail; exit 1; }
+git config --global --add safe.directory '*'
 if [ -n "${ROCM_SDK:-}" ]; then
   extra=(); for e in ${SDK_EXTRA:-}; do extra+=(--extra-index-url "$e"); done
   python3 -m venv /r && PIP_CONFIG_FILE=/dev/null /r/bin/pip install -q --pre --index-url "$SDK_INDEX" "${extra[@]}" \
@@ -27,6 +27,9 @@ if [ -n "${ROCM_SDK:-}" ]; then
   cat /src/rocm-sdk.txt
 else
   ROCM_HOME=/opt/rocm
+  # the 7.14 and 10.0 images leave /opt/rocm/lib out of the loader's path (the test binaries
+  # link -lamdhip64 with no rpath: "libamdhip64.so.7: cannot open shared object file")
+  export LD_LIBRARY_PATH=$ROCM_HOME/lib:${LD_LIBRARY_PATH:-}
   # the WMMA kernels need rocWMMA's headers; images ship them or the apt package does
   [ -f $ROCM_HOME/include/rocwmma/rocwmma.hpp ] || apt-get install -y -qq rocwmma-dev > /dev/null ||
     echo "no rocwmma-dev package in this image's apt sources"
