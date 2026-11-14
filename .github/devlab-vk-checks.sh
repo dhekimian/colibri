@@ -21,7 +21,7 @@ run() {
   echo "---- $name failed (exit $rc), the failing lines:"
   grep -aE '^FAIL |  \^|DIFFERENT' "$log" | head -20 || true
   # the harness names no failing case: its import cases fail over maxrel 1e-3 (run_import_case)
-  awk -F' [|] ' '/^import fmt=/ { split($2, a, "="); if (a[2] + 0 > 1e-3) { print; n = $1; gsub(/[^A-Za-z0-9.=-]+/, "-", n); print n > "/dev/stderr" } }' "$log" 2> "$log.cases"
+  awk -F' [|] ' '/^import fmt=/ { split($2, a, "="); if (a[2] + 0 > 1e-3) { print; n = $1; gsub(/[^A-Za-z0-9.]+/, "-", n); print n > "/dev/stderr" } }' "$log" 2> "$log.cases"
   while read -r c; do result "$name:$c" fail; done < "$log.cases"
   grep -aoE '^FAIL [^:]+:[0-9]+: [^,:]+' "$log" | sed -E 's/^FAIL [^:]+:[0-9]+: //; s/[^A-Za-z0-9._-]+/-/g' | sort -u |
     while read -r c; do result "$name:$c" fail; done
@@ -38,6 +38,7 @@ grep -a '^\[VK\] ready' "$LOGS/harness.err" || true
 run vk-harness-nocoop harness-nocoop env COLI_VK_COOP=0 COLI_VK_TEST_MATMUL_ONLY=1 ./vk_test shaders/qmatmul.spv
 run vk-tier tier ./tests/test_vk_tier shaders/qmatmul.spv
 run vk-tier-host-pairs tier-hp ./tests/test_vk_tier shaders/qmatmul.spv host-pairs
+run vk-chain chain ./tests/test_vk_chain shaders/qmatmul.spv   # upstream runs it staged only (below)
 run glm53-f32 glm53 ./tests/test_glm53_vk_f32
 run glm53-f32-gemm-min-s0 glm53-s0 env COLI_VK_GEMM_MIN_S=0 ./tests/test_glm53_vk_f32
 

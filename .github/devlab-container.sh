@@ -36,7 +36,7 @@ fi
 result setup pass
 
 "$ROCM_HOME/bin/rocminfo" > /tmp/rocminfo.txt 2>&1 || true
-grep -o "gfx[0-9a-f]*" /tmp/rocminfo.txt | grep -v gfx000 | sort -u | sed -n 1p > /src/arch.txt || true
+awk '$1 == "Name:" && $2 ~ /^gfx[0-9a-f]+$/ && $2 != "gfx000" {print $2}' /tmp/rocminfo.txt | sort -u | tr '\n' ' ' | sed 's/ $//' > /src/arch.txt || true
 "$ROCM_HOME/bin/hipconfig" --version > /src/hip.txt 2>/dev/null || true
 echo "arch $(cat /src/arch.txt), HIP $(cat /src/hip.txt)"
 if make -C c hip-test HIP=1 HIP_ARCH="$GFX" ROCM_HOME="$ROCM_HOME"; then result hip-test pass; else result hip-test fail; fi

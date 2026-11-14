@@ -1,7 +1,7 @@
 # Known upstream failures: <check glob> | <reason> | <upstream issue, or "not filed">
 # A failure listed here shows as a warning; anything else fails the job. Checks come from
 # .github/devlab-vk-checks.sh; <check>:<case> names one failing case of a program.
-vk-harness:import-fmt=1-S=64-I=2048-O=384-gemm | run_import_case takes the cooperative-matrix GEMM on RADV (Lavapipe has none, so upstream CI never runs it) and misses its 1e-3 maxrel bound (1.07e-3 gfx1151, 1.32e-3 gfx1201); 2.2e-4 with COLI_VK_COOP=0 | not filed
+vk-harness:import-fmt-1-S-64-I-2048-O-384-gemm | run_import_case takes the cooperative-matrix GEMM on RADV (Lavapipe has none, so upstream CI never runs it) and misses its 1e-3 maxrel bound (1.07e-3 gfx1151, 1.32e-3 gfx1201); 2.2e-4 with COLI_VK_COOP=0 | not filed
 vk-tier:window | test_vk_tier window_case expects the COLI_VK_WINDOW_PROBE_MB/ASK_MB probe to stage, but place_decide never probes when the mapped type is not device-local (integrated GPU: Strix Halo, RADV memtype 2) | not filed
 staged-tier:window | the same window_case, in the staged run of test_vk_tier | not filed
 staged-tier-noimport:window | the same window_case, staged with every copy through the staging buffer | not filed

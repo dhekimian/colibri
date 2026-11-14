@@ -94,7 +94,7 @@ jobs:
               checks = dict(l.strip().split("=", 1) for l in open("results.txt") if "=" in l)
           except FileNotFoundError:
               checks = {}
-          expected = ["setup", "hip-test", "vk-build", "vk-harness", "vk-harness-nocoop", "vk-tier", "vk-tier-host-pairs",
+          expected = ["setup", "hip-test", "vk-build", "vk-harness", "vk-harness-nocoop", "vk-tier", "vk-tier-host-pairs", "vk-chain",
                       "glm53-f32", "glm53-f32-gemm-min-s0", "staged-tier", "staged-tier-noimport", "staged-chain"] + \
                      ["staged-harness-" + m for m in ("mapped", "staged", "staged-again", "staged-noimport", "window")]
           missing = [c for c in expected if c not in checks]
