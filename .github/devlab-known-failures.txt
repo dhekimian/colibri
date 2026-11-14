@@ -5,3 +5,4 @@ vk-harness:import-fmt-1-S-64-I-2048-O-384-gemm | run_import_case takes the coope
 vk-tier:window | test_vk_tier window_case expects the COLI_VK_WINDOW_PROBE_MB/ASK_MB probe to stage, but place_decide never probes when the mapped type is not device-local (integrated GPU: Strix Halo, RADV memtype 2) | not filed
 staged-tier:window | the same window_case, in the staged run of test_vk_tier | not filed
 staged-tier-noimport:window | the same window_case, staged with every copy through the staging buffer | not filed
+*chain:dsv4-compress-ratio-4-overlap-1-ape-1 | chain_dsv4.comp mode 2 (compress) reads ring rows other invocations wrote, but its ring buffer R7 is not declared coherent; wrong output on RADV (rel err 0.598, gfx1151 and gfx1201), passes with R7 coherent | not filed

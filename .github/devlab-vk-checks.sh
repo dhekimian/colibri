@@ -84,5 +84,16 @@ if grep -q '^vk-chain=fail' "$RESULTS"; then
   grep -aE '^FAIL|^PASS' "$LOGS/chain-coherent.log" || true
   cp "$LOGS/chain_dsv4.comp" "$LOGS/chain_kda.comp" shaders/
   make shaders/chain_dsv4.spv shaders/chain_kda.spv shaders/chain_kda_rows.spv VK=1 > /dev/null
+  # how far apart the KDA block-of-rows and one-row-a-call results are
+  cp tests/test_vk_chain.c "$LOGS/"
+  sed -i '/int same = ok && !memcmp(vkc_ptr(y1), vkc_ptr(y2)/a\
+    { const float *ya = (const float *)vkc_ptr(y1), *yb = (const float *)vkc_ptr(y2); double my = 0, mys = 0, ms = 0; size_t ny = 0;\
+      for (size_t i = 0; i < (size_t)S * P; i++) { double d = fabs((double)ya[i] - yb[i]); if (d > my) my = d; if (fabs(yb[i]) > mys) mys = fabs(yb[i]); ny += ya[i] != yb[i]; }\
+      for (size_t i = 0; i < (size_t)H * KD * VD; i++) { double d = fabs((double)st1[i] - st2[i]); if (d > ms) ms = d; }\
+      printf("DIAG kda rows H %d KD %d S %d flags %d: %zu of %zu outputs differ, max |dy| %.3g (max |y| %.3g), max |dstate| %.3g\\n", H, KD, S, flags, ny, (size_t)S * P, my, mys, ms); }' tests/test_vk_chain.c
+  make tests/test_vk_chain VK=1 > /dev/null && ./tests/test_vk_chain shaders/qmatmul.spv > "$LOGS/chain-kda-diff.log" 2>&1
+  echo "---- diag: KDA rows against one row a call:"
+  grep -a '^DIAG' "$LOGS/chain-kda-diff.log" || tail -5 "$LOGS/chain-kda-diff.log"
+  cp "$LOGS/test_vk_chain.c" tests/ && make tests/test_vk_chain VK=1 > /dev/null
 fi
 exit 0
