@@ -3,7 +3,8 @@
 # CI builds the HIP backend but never runs it, and the Vulkan suites run on
 # Lavapipe (CPU). This runs both on a Radeon 8060S (Strix Halo, gfx1151) and a
 # Radeon AI PRO R9700 (gfx1201): `make hip-test` built for the job's GPU, then
-# the shader and staged Vulkan checks on RADV, in the stock ROCm container.
+# the shader and staged Vulkan checks on RADV (one check per piece, .github/devlab-vk-checks.sh),
+# in the stock ROCm container. Failures listed in .github/devlab-known-failures.txt are warnings.
 #
 # Every run uploads summary-*.json (which checks passed) so results compare
 # across ROCm versions; other workflows call this one for a version matrix.
@@ -70,15 +71,9 @@ jobs:
               if make -C c hip-test HIP=1 HIP_ARCH=${{ matrix.gfx }}; then result hip-test pass; else result hip-test fail; fi
               # The real GPU through RADV, not Lavapipe (the suites default to the CPU device).
               export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
-              cd c
-              if bash tests/vulkan_engines.sh shader; then result vulkan-shader pass; else result vulkan-shader fail; fi
-              if bash tests/vulkan_engines.sh staged; then result vulkan-staged pass; else result vulkan-staged fail; fi
-              # The same suites on the fp32 GEMM only (COLI_VK_COOP=0). Lavapipe has no cooperative
-              # matrix, so upstream CI never runs that path; these keep every other case gated
-              # while the cooperative-matrix import case is a known failure.
-              if COLI_VK_COOP=0 bash tests/vulkan_engines.sh shader; then result vulkan-shader-nocoop pass; else result vulkan-shader-nocoop fail; fi
-              if COLI_VK_COOP=0 bash tests/vulkan_engines.sh staged; then result vulkan-staged-nocoop pass; else result vulkan-staged-nocoop fail; fi
               echo "mesa-vulkan-drivers $(dpkg-query -W -f="\${Version}" mesa-vulkan-drivers)"
+              # tests/vulkan_engines.sh shader and staged, one check per piece (see the script).
+              RESULTS=/src/results.txt LOGS=/src/vk-logs bash .github/devlab-vk-checks.sh
               chown -R "$(stat -c %u:%g /src)" /src
             '
           cat results.txt
@@ -98,12 +93,17 @@ jobs:
               checks = dict(l.strip().split("=", 1) for l in open("results.txt") if "=" in l)
           except FileNotFoundError:
               checks = {}
-          expected = ["hip-test", "vulkan-shader", "vulkan-staged", "vulkan-shader-nocoop", "vulkan-staged-nocoop"]
+          expected = ["hip-test", "vk-build", "vk-harness", "vk-harness-nocoop", "vk-tier", "vk-tier-host-pairs",
+                      "glm53-f32", "glm53-f32-gemm-min-s0", "staged-tier", "staged-tier-noimport", "staged-chain"] + \
+                     ["staged-harness-" + m for m in ("mapped", "staged", "staged-again", "staged-noimport", "window")]
           missing = [c for c in expected if c not in checks]
           kf, nf = [], []
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
               for name, v in checks.items():
                   if v == "pass":
+                      continue
+                  # a program whose failing cases are named (<check>:<case>) is judged by those cases
+                  if ":" not in name and any(k.startswith(name + ":") for k in checks):
                       continue
                   hit = next((k for k in known if fnmatch.fnmatch(name, k[0])), None)
                   if hit:
@@ -164,3 +164,12 @@ jobs:
           name: devlab-summary-${{ inputs.label || 'release' }}-${{ matrix.gpu }}-${{ github.run_attempt }}
           path: summary.json
           retention-days: 90
+
+      - name: Upload the Vulkan logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devlab-vk-logs-${{ inputs.label || 'release' }}-${{ matrix.gpu }}-${{ github.run_attempt }}
+          path: vk-logs
+          retention-days: 30
+          if-no-files-found: ignore
