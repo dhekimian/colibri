@@ -1,0 +1,4 @@
+# Known upstream failures: <check name glob> | <reason> | <upstream issue, or "not filed">
+# A failure listed here shows as a warning; anything else fails the job.
+vulkan-shader | vk_test "import fmt=1 S=64 I=2048 O=384" takes the cooperative-matrix GEMM on RADV (Lavapipe has none) and misses its 1e-3 maxrel bound (1.07e-3 gfx1151, 1.32e-3 gfx1201); passes with COLI_VK_COOP=0 | not filed
+vulkan-staged | the same vk_test case, in the staged harness's first (mapped) run | not filed

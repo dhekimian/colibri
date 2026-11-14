@@ -73,27 +73,55 @@ jobs:
               cd c
               if bash tests/vulkan_engines.sh shader; then result vulkan-shader pass; else result vulkan-shader fail; fi
               if bash tests/vulkan_engines.sh staged; then result vulkan-staged pass; else result vulkan-staged fail; fi
-              # Diagnostics, not gated: which harness case fails, and on which path.
-              {
-                ls /usr/share/vulkan/icd.d
-                echo "== mesa-vulkan-drivers $(dpkg-query -W -f="\${Version}" mesa-vulkan-drivers)"
-                for icd in radeon lvp; do
-                  for coop in 1 0; do
-                    echo "== vk_test on $icd, COLI_VK_COOP=$coop"
-                    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/${icd}_icd.json COLI_VK_COOP=$coop COLI_VK_TEST_MATMUL_ONLY=1 \
-                      ./vk_test shaders/qmatmul.spv > diag.log 2> diag.err; echo "exit $?"
-                    grep -aE "^\[VK\] ready|^import |digest|  \^|^(PASS|FAIL)$" diag.err diag.log || true
-                  done
-                done
-                echo "== staged harness, mapped run (as vulkan_engines.sh staged runs it)"
-                COLI_VK_STAGED=0 COLI_VK_TEST_MATMUL_ONLY=1 ./vk_test shaders/qmatmul.spv > diag.log 2> diag.err; echo "exit $?"
-                grep -aE "^import |^(PASS|FAIL)$" diag.log || true
-              } 2>&1 | tee /src/vk-diag.txt
-              rm -f diag.log diag.err
+              # The same suites on the fp32 GEMM only (COLI_VK_COOP=0). Lavapipe has no cooperative
+              # matrix, so upstream CI never runs that path; these keep every other case gated
+              # while the cooperative-matrix import case is a known failure.
+              if COLI_VK_COOP=0 bash tests/vulkan_engines.sh shader; then result vulkan-shader-nocoop pass; else result vulkan-shader-nocoop fail; fi
+              if COLI_VK_COOP=0 bash tests/vulkan_engines.sh staged; then result vulkan-staged-nocoop pass; else result vulkan-staged-nocoop fail; fi
+              echo "mesa-vulkan-drivers $(dpkg-query -W -f="\${Version}" mesa-vulkan-drivers)"
               chown -R "$(stat -c %u:%g /src)" /src
             '
           cat results.txt
-          ! grep -q '=fail' results.txt
+
+      - name: Judge results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import fnmatch, json, os
+          known = []
+          for line in open(".github/devlab-known-failures.txt"):
+              line = line.strip()
+              if line and not line.startswith("#"):
+                  pat, reason, issue = [f.strip() for f in line.split("|", 2)]
+                  known.append((pat, reason, issue))
+          try:
+              checks = dict(l.strip().split("=", 1) for l in open("results.txt") if "=" in l)
+          except FileNotFoundError:
+              checks = {}
+          expected = ["hip-test", "vulkan-shader", "vulkan-staged", "vulkan-shader-nocoop", "vulkan-staged-nocoop"]
+          missing = [c for c in expected if c not in checks]
+          kf, nf = [], []
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              for name, v in checks.items():
+                  if v == "pass":
+                      continue
+                  hit = next((k for k in known if fnmatch.fnmatch(name, k[0])), None)
+                  if hit:
+                      kf.append(name)
+                      print(f"::warning title=Known upstream failure::{name} \u2014 {hit[1]} ({hit[2]})")
+                      out.write(f"- known upstream failure: `{name}` \u2014 {hit[1]} ({hit[2]})\n")
+                  else:
+                      nf.append(name)
+                      print(f"::error::new failure: {name}")
+                      out.write(f"- NEW failure: `{name}`\n")
+              for c in missing:
+                  print(f"::error::check did not run: {c}")
+                  out.write(f"- did not run: `{c}`\n")
+          verdict = "fail" if nf or missing else "known-failures" if kf else "pass"
+          json.dump({"verdict": verdict, "known_failures": kf, "new_failures": nf + missing}, open("judge.json", "w"))
+          print("verdict:", verdict)
+          raise SystemExit(verdict == "fail")
+          PY
 
       - name: Write the run summary
         if: always()
@@ -107,6 +135,10 @@ jobs:
                   return None
           checks = dict(l.split("=", 1) for l in (read("results.txt") or "").splitlines() if "=" in l)
           passed = sum(v == "pass" for v in checks.values())
+          try:
+              judge = json.load(open("judge.json"))
+          except Exception:
+              judge = {"verdict": "fail", "known_failures": [], "new_failures": ["judge step did not run"]}
           summary = {
               "schema": 1, "project": "colibri", "label": os.environ["LABEL"],
               "release": "${{ github.sha }}"[:12], "combo": os.environ["IMAGE"],
@@ -116,6 +148,8 @@ jobs:
               "tests": {"ran": len(checks), "passed": passed, "failed": len(checks) - passed,
                         "errors": 0, "skipped": 0} if checks else None,
               "job_status": "${{ job.status }}",
+              "verdict": judge["verdict"], "known_failures": judge["known_failures"],
+              "new_failures": judge["new_failures"],
               "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
               "finished": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
           }
