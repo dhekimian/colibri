@@ -68,4 +68,21 @@ run staged-chain staged-chain env COLI_VK_STAGED=1 ./tests/test_vk_chain shaders
 for t in staged-tier staged-chain; do
   grep -q 'resident data in host memory: 0.0 MiB' "$LOGS/$t.err" || result "$t:resident-in-host-memory" fail
 done
+
+# Diagnostic, not a check: the chain ops' failures with the cross-invocation buffers declared
+# coherent (the dsv4 compressor's ring R7, the KDA window/state RB). GLSL makes another
+# invocation's buffer writes visible after barrier() only for coherent buffers; on RDNA a
+# workgroup can span both CUs of a WGP, each with its own L0 cache. Lavapipe never shows this.
+if grep -q '^vk-chain=fail' "$RESULTS"; then
+  cp shaders/chain_dsv4.comp shaders/chain_kda.comp "$LOGS/"
+  sed -i 's/^layout(std430, binding = 7) buffer R7/layout(std430, binding = 7) coherent buffer R7/' shaders/chain_dsv4.comp
+  sed -i 's/^layout(std430, binding = 2) buffer RB/layout(std430, binding = 2) coherent buffer RB/' shaders/chain_kda.comp
+  git diff --stat -- shaders/ || true
+  make shaders/chain_dsv4.spv shaders/chain_kda.spv shaders/chain_kda_rows.spv VK=1 > /dev/null
+  ./tests/test_vk_chain shaders/qmatmul.spv > "$LOGS/chain-coherent.log" 2>&1
+  echo "---- diag: test_vk_chain with R7 and RB coherent (exit $?):"
+  grep -aE '^FAIL|^PASS' "$LOGS/chain-coherent.log" || true
+  cp "$LOGS/chain_dsv4.comp" "$LOGS/chain_kda.comp" shaders/
+  make shaders/chain_dsv4.spv shaders/chain_kda.spv shaders/chain_kda_rows.spv VK=1 > /dev/null
+fi
 exit 0
